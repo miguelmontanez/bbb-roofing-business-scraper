@@ -14,7 +14,7 @@ HEADERS = {
 }
 
 MAX_MATCHES = 5000
-OUTPUT_FILE = "assets/bbb_state48_display_texts.json"
+OUTPUT_FILE = "assets/display_texts.json"
 
 all_display_texts = set()
 
