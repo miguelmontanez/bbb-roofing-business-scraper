@@ -2,7 +2,7 @@ import csv
 import json
 
 input_csv = "assets/us_cities.csv"
-output_json = "assets/display_texts.json"
+output_json = "assets/manual_display_texts.json"
 
 display_texts = set()
 
