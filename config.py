@@ -23,15 +23,9 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # BBB.org API configuration
 BBB_BASE_URL = "https://www.bbb.org/api/v2/api-0.0.1"
-BBB_SEARCH_ENDPOINT = "/localservice"
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
-
-# Scraping configuration
-PHASE_1_RECORDS = 300
-PHASE_2_RECORDS = 2700
-TOTAL_RECORDS = PHASE_1_RECORDS + PHASE_2_RECORDS
 
 # Records per page (based on BBB response structure)
 RECORDS_PER_PAGE = 15
@@ -47,9 +41,6 @@ LOWER_48_STATES = {
     "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN",
     "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
 }
-
-# Exclude Alaska and Hawaii
-EXCLUDED_STATES = {"AK", "HI"}
 
 # CSV export settings
 CSV_ENCODING = "utf-8"
@@ -82,14 +73,3 @@ USER_AGENT = (
 # Proxy configuration (optional)
 PROXY = None
 # Example: PROXY = {"http": "http://proxy.example.com:8080", "https": "https://proxy.example.com:8080"}
-
-# Data validation
-MIN_ADDRESS_LENGTH = 3
-MIN_BUSINESS_NAME_LENGTH = 2
-
-# Output file paths
-PHASE_1_OUTPUT = DATA_DIR / "phase1_records.csv"
-PHASE_2_OUTPUT = DATA_DIR / "phase2_records.csv"
-
-# Debug mode
-DEBUG = False

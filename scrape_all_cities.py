@@ -132,7 +132,7 @@ def clear_progress() -> bool:
     try:
         if PROGRESS_TRACKING_JSON.exists():
             PROGRESS_TRACKING_JSON.unlink()
-            logger.info("✓ Progress file cleared")
+            logger.info("[SUCCESS] Progress file cleared")
         return True
     except Exception as e:
         logger.error(f"Failed to clear progress: {e}")
@@ -176,7 +176,9 @@ def scrape_all_cities(target_records_per_city: int = None,
                       max_cities: int = None,
                       skip_cities: int = 0,
                       total_record_limit: int = None,
-                      resume_from_progress: bool = False) -> bool:
+                      resume_from_progress: bool = False,
+                      start_index: int = None,
+                      end_index: int = None) -> bool:
     """
     Loop through all cities and scrape roofing contractors
     Saves records incrementally to CSV after each city.
@@ -217,12 +219,19 @@ def scrape_all_cities(target_records_per_city: int = None,
     
     scraper = BBBScraper()
     
-    # Filter cities
-    if max_cities:
-        display_texts = display_texts[:max_cities]
-    
-    if skip_cities > 0:
-        display_texts = display_texts[skip_cities:]
+    # Apply optional start/end index slicing (1-based, inclusive end)
+    if start_index is not None or end_index is not None:
+        # Convert start to 0-based index
+        start = (start_index - 1) if start_index and start_index > 0 else 0
+        end = end_index if end_index and end_index > 0 else None
+        display_texts = display_texts[start:end]
+    else:
+        # Filter by skip and max if no explicit start/end provided
+        if max_cities:
+            display_texts = display_texts[:max_cities]
+        
+        if skip_cities > 0:
+            display_texts = display_texts[skip_cities:]
     
     # Remove already processed cities
     remaining_cities = [c for c in display_texts if c not in processed_cities_set]
@@ -405,6 +414,18 @@ def main():
         action="store_true",
         help="Clear previous progress and start from the first city"
     )
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        help="Start index for cities (1-based, inclusive)"
+    )
+    parser.add_argument(
+        "--end-index",
+        type=int,
+        default=None,
+        help="End index for cities (1-based, inclusive)"
+    )
     
     args = parser.parse_args()
     
@@ -427,6 +448,8 @@ def main():
     logger.info(f"  Records per city: {args.records_per_city or 'all'}")
     logger.info(f"  Skip first: {args.skip_cities} cities")
     logger.info(f"  Resume from progress: {args.pause}")
+    logger.info(f"  Start index: {args.start_index or 'none'}")
+    logger.info(f"  End index: {args.end_index or 'none'}")
     logger.info("="*60)
     
     # Scrape all cities with new parameters
@@ -435,7 +458,9 @@ def main():
         max_cities=args.max_cities,
         skip_cities=args.skip_cities,
         total_record_limit=args.records,
-        resume_from_progress=args.pause
+        resume_from_progress=args.pause,
+        start_index=args.start_index,
+        end_index=args.end_index
     )
     
     # Save final summary

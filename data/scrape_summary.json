@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-01-29T02:44:15.255342",
-  "total_records_collected": 200,
+  "timestamp": "2026-01-29T02:59:31.691240",
+  "total_records_collected": 50,
   "total_cities_processed": 1,
   "progress_file": "D:\\Workspace\\bbb-roofing-business-scraper\\data\\scrape_progress.json",
   "records_file": "D:\\Workspace\\bbb-roofing-business-scraper\\data\\all_cities_records.csv"

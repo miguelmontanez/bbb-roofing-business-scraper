@@ -265,6 +265,9 @@ class BBBScraper:
         collected = []
         page = 1
 
+        # Track business names we have already collected for this city to avoid duplicates
+        seen_names = set()
+
         while True:
             if target_records and len(collected) >= target_records:
                 break
@@ -351,10 +354,19 @@ class BBBScraper:
                 if target_records and len(collected) >= target_records:
                     break
 
-                if self.is_valid_record(record):
-                    collected.append(self.extract_business_data(record, source_url=search_url))
-                else:
+                if not self.is_valid_record(record):
                     self.invalid_records.append(record.get('businessName', 'Unknown'))
+                    continue
+
+                # Normalize and clean the business name for deduplication
+                raw_name = record.get('businessName') or ''
+                name_key = clean_html_tags(raw_name).strip().lower()
+                if name_key in seen_names:
+                    logger.info(f"Skipping duplicate business name in city results: {raw_name}")
+                    continue
+
+                seen_names.add(name_key)
+                collected.append(self.extract_business_data(record, source_url=search_url))
 
             logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
 
