@@ -121,27 +121,27 @@ class BBBScraper:
             True if record meets all criteria
         """
         # Check business name contains required keyword
-        business_name = record.get("businessName", "")
+        business_name = (record.get("businessName") or "").strip()
         if not contains_keyword(business_name, KEYWORD_FILTERS):
             return False
         
         # Check state is in lower 48
-        state = record.get("state", "")
+        state = (record.get("state") or "").strip()
         if state not in LOWER_48_STATES:
             return False
         
         # Check address exists
-        address = record.get("address", "").strip()
+        address = (record.get("address") or "").strip()
         if not address or len(address) < 3:
             return False
         
         # Check city exists
-        city = record.get("city", "").strip()
+        city = (record.get("city") or "").strip()
         if not city or len(city) < 2:
             return False
         
         # Check postal code exists
-        postal = record.get("postalcode", "").strip()
+        postal = (record.get("postalcode") or "").strip()
         if not postal:
             return False
         
@@ -159,25 +159,25 @@ class BBBScraper:
             Cleaned business data dictionary
         """
         # Extract phone numbers
-        phones = record.get("phone", [])
+        phones = record.get("phone") or []
         phone = phones[0] if isinstance(phones, list) and phones else ""
         
         # Extract categories
-        categories = record.get("categories", [])
+        categories = record.get("categories") or []
         category_names = [cat.get("name", "") for cat in categories]
         categories_str = "; ".join(category_names) if category_names else ""
         
         # Build source URL
-        report_url = record.get("reportUrl", "")
+        report_url = (record.get("reportUrl") or "")
         if report_url and not report_url.startswith("http"):
             report_url = f"https://www.bbb.org{report_url}"
         
         business_data = {
-            "business_name": record.get("businessName", "").strip(),
-            "street_address": record.get("address", "").strip(),
-            "city": record.get("city", "").strip(),
-            "state": record.get("state", "").strip().upper(),
-            "postal_code": record.get("postalcode", "").strip(),
+            "business_name": (record.get("businessName") or "").strip(),
+            "street_address": (record.get("address") or "").strip(),
+            "city": (record.get("city") or "").strip(),
+            "state": (record.get("state") or "").strip().upper(),
+            "postal_code": (record.get("postalcode") or "").strip(),
             "phone": phone.strip() if phone else "",
             "email": "",  # BBB doesn't typically provide email in search results
             "website": "",  # Usually not in search results
@@ -186,7 +186,7 @@ class BBBScraper:
             "incorporated_date": "",  # Not available in search results
             "principal_contact": "",  # Not available in search results
             "business_categories": categories_str,
-            "rating": record.get("rating", ""),
+            "rating": (record.get("rating") or ""),
             "bbb_member": str(record.get("bbbMember", False)).lower(),
             "bbb_accredited": str(record.get("accreditedCharity", False)).lower(),
             "source_url": report_url

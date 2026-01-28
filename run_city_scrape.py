@@ -1,13 +1,15 @@
 import sys
-import json
 from pathlib import Path
 from src.scraper import BBBScraper
+from src.csv_exporter import CSVExporter
+from config import DATA_DIR
 
 DEFAULT_URL = (
     "https://www.bbb.org/search?find_country=USA&find_entity=10126-000&"
     "find_latlng=41.870171%2C-87.671737&find_loc=Chicago%2C%20IL&"
     "find_text=Roofing%20Contractors&find_type=Category"
 )
+
 
 def main():
     url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
@@ -16,14 +18,21 @@ def main():
     scraper = BBBScraper()
     records = scraper.scrape_city_search_url(url, target_records=target)
 
-    out_dir = Path("data")
+    out_dir = DATA_DIR
     out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / "chicago_records.json"
+    out_csv = out_dir / "chicago_records.csv"
 
-    with out_path.open("w", encoding="utf-8") as f:
-        json.dump(records, f, indent=2)
+    success = CSVExporter.export(records, str(out_csv))
+    print(f"Exported {len(records)} records to {out_csv} -> {success}")
 
-    print(f"Wrote {len(records)} records to {out_path}")
+    is_valid, errors = CSVExporter.validate_csv(str(out_csv))
+    if not is_valid:
+        print("CSV validation failed with errors:")
+        for e in errors:
+            print(" -", e)
+    else:
+        print("CSV validation passed.")
+
 
 if __name__ == "__main__":
     main()
