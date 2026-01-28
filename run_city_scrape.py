@@ -3,6 +3,10 @@ from pathlib import Path
 from src.scraper import BBBScraper
 from src.csv_exporter import CSVExporter
 from config import DATA_DIR
+from src.utils import setup_logging
+
+# Ensure logging handlers are configured for console + file
+logger = setup_logging()
 
 DEFAULT_URL = (
     "https://www.bbb.org/search?find_country=USA&find_entity=10126-000&"
@@ -15,6 +19,8 @@ def main():
     url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
     target = int(sys.argv[2]) if len(sys.argv) > 2 else None
 
+    logger.info(f"Starting city scrape for URL: {url} target={target}")
+
     scraper = BBBScraper()
     records = scraper.scrape_city_search_url(url, target_records=target)
 
@@ -23,15 +29,15 @@ def main():
     out_csv = out_dir / "chicago_records.csv"
 
     success = CSVExporter.export(records, str(out_csv))
-    print(f"Exported {len(records)} records to {out_csv} -> {success}")
+    logger.info(f"Exported {len(records)} records to {out_csv} -> {success}")
 
     is_valid, errors = CSVExporter.validate_csv(str(out_csv))
     if not is_valid:
-        print("CSV validation failed with errors:")
+        logger.error("CSV validation failed with errors:")
         for e in errors:
-            print(" -", e)
+            logger.error(" - %s", e)
     else:
-        print("CSV validation passed.")
+        logger.info("CSV validation passed.")
 
 
 if __name__ == "__main__":

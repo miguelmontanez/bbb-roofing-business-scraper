@@ -67,9 +67,6 @@ CSV_COLUMNS = [
     "incorporated_date",
     "principal_contact",
     "business_categories",
-    "rating",
-    "bbb_member",
-    "bbb_accredited",
     "source_url"
 ]
 

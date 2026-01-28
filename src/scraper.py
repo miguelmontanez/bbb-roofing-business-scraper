@@ -205,17 +205,24 @@ class BBBScraper:
                     # Try to extract embedded JSON state from the detail page
                     detail_data = None
                     try:
-                        m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', detail_html, re.DOTALL)
-                        if m:
-                            detail_data = json.loads(m.group(1))
+                        # Prefer schema.org JSON-LD if present (contains reliable employee info)
+                        m2 = re.search(r'<script type="application/ld\+json">(.*?)</script>', detail_html, re.DOTALL)
+                        schema_ld = None
+                        if m2:
+                            try:
+                                schema_ld = json.loads(m2.group(1))
+                            except Exception:
+                                schema_ld = None
+
+                        # Fallback to window.__PRELOADED_STATE__ if no JSON-LD
+                        if schema_ld is not None:
+                            detail_data = schema_ld
                         else:
-                            # Some detail pages may include a JSON LD or other embedded data
-                            m2 = re.search(r'<script type="application/ld\+json">(.*?)</script>', detail_html, re.DOTALL)
-                            if m2:
-                                try:
-                                    detail_data = json.loads(m2.group(1))
-                                except Exception:
-                                    detail_data = None
+                            m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', detail_html, re.DOTALL)
+                            if m:
+                                detail_data = json.loads(m.group(1))
+                            else:
+                                detail_data = None
                     except Exception:
                         detail_data = None
 
@@ -235,6 +242,7 @@ class BBBScraper:
                                     return res
                         return None
 
+                    logger.info(f"Firstar==>>detail_data type: {detail_data}")
                     if detail_data:
                         # Dates
                         dates = find_key(detail_data, "dates") or {}
@@ -248,31 +256,64 @@ class BBBScraper:
                             business_data["entity_type"] = type_of_entity.get("name") or business_data["entity_type"]
 
                         # Principal contact(s)
-                        employees = find_key(detail_data, "employee") or find_key(detail_data, "employees") or []
                         contacts = []
-                        if isinstance(employees, list):
-                            for e in employees:
-                                given = (e.get("givenName") or e.get("given_name") or "").strip()
-                                family = (e.get("familyName") or e.get("family_name") or "").strip()
-                                if given or family:
-                                    contacts.append(f"{given} {family}".strip())
+
+                        # If schema.org JSON-LD is present and has 'employee', prefer it
+                        if isinstance(detail_data, (list, dict)):
+                            schema_employees = None
+                            logger.info(f"Firstar==>>Checking for schema.org employees {isinstance(detail_data, list)}, {isinstance(detail_data, dict)}")
+                            if isinstance(detail_data, list):
+                                logger.info(f"Firstar==>>detail_data is a list with {len(detail_data)} items")
+                                # Find an object that contains 'employee'
+                                for obj in detail_data:
+                                    if isinstance(obj, dict) and obj.get("employee"):
+                                        logger.info(f"Firstar==>>detail_data->employee_object {obj}")
+                                        schema_employees = obj.get("employee")
+                                        break
+                            elif isinstance(detail_data, dict) and detail_data.get("employee"):
+                                schema_employees = detail_data.get("employee")
+                                logger.info(f"Firstar==>>detail_data schema_employees {schema_employees}")
+                            else:
+                                logger.info("Firstar==>>detail_data has no employee key")
+
+                            if schema_employees and isinstance(schema_employees, list):
+                                for e in schema_employees:
+                                    given = (e.get("givenName") or e.get("given_name") or "").strip()
+                                    family = (e.get("familyName") or e.get("family_name") or "").strip()
+                                    if given or family:
+                                        contacts.append(f"{given} {family}".strip())
+
+                        # Fallback to other embedded structures if no schema.org employees found
+                        if not contacts:
+                            employees = find_key(detail_data, "employee") or find_key(detail_data, "employees") or []
+                            if isinstance(employees, list):
+                                for e in employees:
+                                    if not isinstance(e, dict):
+                                        continue
+                                    given = (e.get("givenName") or "").strip()
+                                    family = (e.get("familyName") or "").strip()
+                                    if given or family:
+                                        contacts.append(f"{given} {family}".strip())
+
                         if contacts:
                             business_data["principal_contact"] = "; ".join(contacts)
 
-                        # Referral assistance texts may contain phone and website
+                        # Referral assistance texts may contain website (do not override phone)
                         ref_texts = find_key(detail_data, "referralAssistanceTexts") or []
                         if isinstance(ref_texts, list):
                             for txt in ref_texts:
                                 if not isinstance(txt, str):
                                     continue
-                                # Phone
-                                mphone = re.search(r'Phone Number:\s*([0-9()\-+. \\]+)', txt)
-                                if mphone:
-                                    business_data["phone"] = business_data.get("phone") or mphone.group(1).strip()
                                 # URL
                                 murl = re.search(r'(https?://[\w\-._~:/?#\[\]@!$&'""'()*+,;=%]+)', txt)
                                 if murl:
                                     business_data["website"] = business_data.get("website") or murl.group(1).strip()
+
+                        # Also check schema.org telephone if phone not present (but prefer main page phone)
+                        if not business_data.get("phone"):
+                            tel = find_key(detail_data, "telephone")
+                            if tel:
+                                business_data["phone"] = tel.strip()
 
                         # Real-time listed emails
                         emails_raw = find_key(detail_data, "getListedRealTimeEmails")
@@ -339,6 +380,7 @@ class BBBScraper:
                         logger.info(f"Collected record {records_collected}: {business_data['business_name']}")
                     else:
                         self.invalid_records.append(record.get("businessName", "Unknown"))
+                    break #FIRSTAR-TEST
                 
                 # Check if there are more pages
                 total_pages = results.get("totalPages", 1)
@@ -346,6 +388,9 @@ class BBBScraper:
                     break
                 
                 page += 1
+
+                break #FIRSTAR-TEST
+            break #FIRSTAR-TEST
         
         self.valid_records = all_records
         logger.info(f"Phase 1 complete. Collected {len(all_records)} valid records.")
@@ -388,7 +433,7 @@ class BBBScraper:
                     logger.info(f"Fetching page {page} for {search_url} (attempt {attempt+1})")
                     resp = self.session.get(search_url, params=params, timeout=REQUEST_TIMEOUT,
                                             proxies=PROXY if PROXY else None)
-                    logger.info(f"Received status {resp.text} for page {page}")
+                    logger.info(f"Received status {resp.status_code} for page {page}")
                     if resp.status_code == 200:
                         html = resp.text
                         success = True
@@ -401,6 +446,8 @@ class BBBScraper:
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"HTML request failed: {e}")
                     time.sleep(RETRY_DELAY)
+                
+                break  #FIRSTAR-TEST
 
             logger.info(f"Finished HTML fetch attempts for page {page}")
             if not success or not html:
@@ -462,6 +509,8 @@ class BBBScraper:
                     collected.append(self.extract_business_data(record, source_url=search_url))
                 else:
                     self.invalid_records.append(record.get('businessName', 'Unknown'))
+                
+                break  #FIRSTAR-TEST
 
             logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
 
@@ -469,6 +518,8 @@ class BBBScraper:
                 break
 
             page += 1
+
+            break  #FIRSTAR-TEST
 
         self.valid_records = collected
         logger.info(f"Completed city scrape. Collected {len(collected)} valid records.")
