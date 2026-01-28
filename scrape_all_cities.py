@@ -21,9 +21,76 @@ logger = setup_logging()
 
 # File paths
 DISPLAY_TEXTS_FILE = Path("assets/display_texts.json")
-OUTPUT_CSV = DATA_DIR / "all_cities_records.csv"
 SCRAPE_SUMMARY_JSON = DATA_DIR / "scrape_summary.json"
 PROGRESS_TRACKING_JSON = DATA_DIR / "scrape_progress.json"
+
+
+def generate_csv_filename(records_limit: int = None, 
+                         start_index: int = None,
+                         end_index: int = None,
+                         resume_mode: bool = False) -> Path:
+    """
+    Generate output CSV filename based on command arguments.
+    Filenames include argument context to support multi-processing.
+    
+    Examples:
+      all_cities_records.csv (default)
+      all_cities_records_r200.csv (records limit 200)
+      all_cities_records_i1-100.csv (start index 1 to 100)
+      all_cities_records_i1-100_r200.csv (combined)
+      all_cities_records_resume.csv (resume mode)
+    
+    Args:
+        records_limit: Total record limit (--records)
+        start_index: Start city index (--start-index)
+        end_index: End city index (--end-index)
+        resume_mode: Whether in resume/pause mode
+        
+    Returns:
+        Path object for output CSV
+    """
+    filename = "all_cities_records"
+    
+    if resume_mode:
+        filename += "_resume"
+    elif start_index is not None or end_index is not None:
+        start_str = start_index if start_index else ""
+        end_str = end_index if end_index else ""
+        filename += f"_i{start_str}-{end_str}"
+    
+    if records_limit:
+        filename += f"_r{records_limit}"
+    
+    filename += ".csv"
+    return DATA_DIR / filename
+
+
+def backup_existing_csvs() -> None:
+    """
+    Backup all existing CSV files in data/ directory.
+    Appends current date to filenames to preserve previous runs.
+    
+    Example: all_cities_records.csv -> all_cities_records_2026-01-29.csv
+    """
+    if not DATA_DIR.exists():
+        return
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    csv_files = list(DATA_DIR.glob("*.csv"))
+    
+    if not csv_files:
+        logger.info(f"[INFO] No existing CSV files to backup")
+        return
+    
+    logger.info(f"[ACTION] Backing up {len(csv_files)} existing CSV file(s)")
+    for csv_path in csv_files:
+        backup_name = csv_path.stem + f"_{today}" + csv_path.suffix
+        backup_path = csv_path.parent / backup_name
+        try:
+            csv_path.rename(backup_path)
+            logger.info(f"[SUCCESS] Backed up: {csv_path.name} -> {backup_name}")
+        except Exception as e:
+            logger.warning(f"[WARNING] Failed to backup {csv_path.name}: {e}")
 
 
 def build_search_url(city: str, state: str) -> str:
@@ -139,23 +206,24 @@ def clear_progress() -> bool:
         return False
 
 
-def save_record_incremental(record: Dict) -> bool:
+def save_record_incremental(record: Dict, csv_path: Path) -> bool:
     """
     Save a single record to CSV incrementally (append mode)
     
     Args:
         record: Business record to save
+        csv_path: Path to output CSV file
         
     Returns:
         True if successful
     """
     try:
-        DATA_DIR.mkdir(exist_ok=True)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Check if file exists (to know if we need header)
-        file_exists = OUTPUT_CSV.exists() and OUTPUT_CSV.stat().st_size > 0
+        file_exists = csv_path.exists() and csv_path.stat().st_size > 0
         
-        with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as csvfile:
+        with open(csv_path, "a", newline="", encoding="utf-8") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=CSV_COLUMNS, restval="")
             
             # Write header only if file is new
@@ -178,7 +246,8 @@ def scrape_all_cities(target_records_per_city: int = None,
                       total_record_limit: int = None,
                       resume_from_progress: bool = False,
                       start_index: int = None,
-                      end_index: int = None) -> bool:
+                      end_index: int = None,
+                      csv_path: Path = None) -> bool:
     """
     Loop through all cities and scrape roofing contractors
     Saves records incrementally to CSV after each city.
@@ -189,10 +258,15 @@ def scrape_all_cities(target_records_per_city: int = None,
         skip_cities: Number of cities to skip at the beginning
         total_record_limit: Total record limit for entire scrape (None = no limit)
         resume_from_progress: Whether to resume from last processed city
+        start_index: Start city index (1-based, inclusive)
+        end_index: End city index (1-based, inclusive)
+        csv_path: Path to output CSV file
         
     Returns:
         True if successful
     """
+    if csv_path is None:
+        csv_path = generate_csv_filename(total_record_limit, start_index, end_index, resume_from_progress)
     display_texts = load_display_texts()
     
     if not display_texts:
@@ -289,7 +363,7 @@ def scrape_all_cities(target_records_per_city: int = None,
                 if records_to_save:
                     saved_count = 0
                     for record in records_to_save:
-                        if save_record_incremental(record):
+                        if save_record_incremental(record, csv_path):
                             saved_count += 1
                             total_records_so_far += 1
                             records_processed_this_run += 1
@@ -319,19 +393,20 @@ def scrape_all_cities(target_records_per_city: int = None,
     logger.info(f"Total Records (All-Time): {total_records_so_far}")
     logger.info(f"Cities Processed This Run: {processed_cities - len(processed_cities_set)}/{len(remaining_cities)}")
     logger.info(f"Total Cities Processed Ever: {processed_cities}/{total_cities}")
-    logger.info(f"Output CSV: {OUTPUT_CSV}")
+    logger.info(f"Output CSV: {csv_path}")
     logger.info(f"Progress File: {PROGRESS_TRACKING_JSON}")
     logger.info(f"=== END OF SESSION ===\n")
     
     return True
 
 
-def save_final_summary(total_records: int) -> bool:
+def save_final_summary(total_records: int, csv_path: Path) -> bool:
     """
     Save final summary statistics
     
     Args:
         total_records: Total records collected
+        csv_path: Path to output CSV file
         
     Returns:
         True if successful
@@ -348,7 +423,7 @@ def save_final_summary(total_records: int) -> bool:
             "total_records_collected": total_records,
             "total_cities_processed": len(progress.get("processed_cities", [])),
             "progress_file": str(PROGRESS_TRACKING_JSON),
-            "records_file": str(OUTPUT_CSV)
+            "records_file": str(csv_path)
         }
         
         logger.info(f"Saving summary to {SCRAPE_SUMMARY_JSON}")
@@ -357,8 +432,8 @@ def save_final_summary(total_records: int) -> bool:
         logger.info(f"[SUCCESS] Summary saved")
         
         # Validate CSV
-        if OUTPUT_CSV.exists():
-            is_valid, errors = CSVExporter.validate_csv(str(OUTPUT_CSV))
+        if csv_path.exists():
+            is_valid, errors = CSVExporter.validate_csv(str(csv_path))
             if is_valid:
                 logger.info("[SUCCESS] CSV validation passed")
             else:
@@ -433,13 +508,17 @@ def main():
     logger.info("BBB Roofing Contractors - All Cities Scraper")
     logger.info("="*60)
     
+    # Generate output CSV filename based on arguments
+    output_csv = generate_csv_filename(args.records, args.start_index, args.end_index, args.pause)
+    logger.info(f"[CONFIG] Output CSV: {output_csv.name}")
+    
+    # Backup existing CSVs before starting
+    backup_existing_csvs()
+    
     # Handle --reset
     if args.reset:
         logger.info("[ACTION] Clearing progress file (--reset)")
         clear_progress()
-        if OUTPUT_CSV.exists():
-            OUTPUT_CSV.unlink()
-            logger.info("[SUCCESS] Cleared previous CSV file")
         logger.info("[INFO] Starting fresh from first city...")
     
     logger.info(f"Options:")
@@ -460,14 +539,15 @@ def main():
         total_record_limit=args.records,
         resume_from_progress=args.pause,
         start_index=args.start_index,
-        end_index=args.end_index
+        end_index=args.end_index,
+        csv_path=output_csv
     )
     
     # Save final summary
     if success:
         progress = load_progress()
         total_records = progress.get("total_records", 0)
-        save_final_summary(total_records)
+        save_final_summary(total_records, output_csv)
         
         logger.info("\n[SUCCESS] All operations completed successfully!")
         sys.exit(0)
