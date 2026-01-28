@@ -9,6 +9,7 @@ import re
 from typing import List, Dict, Optional
 import requests
 from urllib.parse import urlencode
+from src.utils import clean_obfuscated_email
 
 from config import (
     BBB_BASE_URL, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY,
@@ -58,25 +59,25 @@ class BBBScraper:
         # Check state is in lower 48
         state = (record.get("state") or "").strip()
         if state not in LOWER_48_STATES:
-            logger.info(f"---!!! Excluding State '{state}' - state {state} not in lower 48")
+            logger.info(f"---!!! Excluding State of this business '{business_name}' - state {state} not in lower 48")
             return False
         
         # Check address exists
         address = (record.get("address") or "").strip()
         if not address or len(address) < 3:
-            logger.info(f"---!!! Excluding Address '{address}' - invalid address")
+            logger.info(f"---!!! Excluding Address of this business '{business_name}' - address '{address}' - invalid address")
             return False
         
         # Check city exists
         city = (record.get("city") or "").strip()
         if not city or len(city) < 2:
-            logger.info(f"---!!! Excluding City '{city}' - invalid city")
+            logger.info(f"---!!! Excluding City of this business '{business_name}' - city '{city}' - invalid city")
             return False
         
         # Check postal code exists
         postal = (record.get("postalcode") or "").strip()
         if not postal:
-            logger.info(f"---!!! Excluding Postal Code '{postal}' - missing postal code")
+            logger.info(f"---!!! Excluding Postal Code of this business '{business_name}' - missing postal code")
             return False
         
         return True
@@ -216,16 +217,24 @@ class BBBScraper:
                         if contacts:
                             business_data["principal_contact"] = "; ".join(contacts)
 
-                        # Referral assistance texts may contain website (do not override phone)
+                        # Referral assistance texts may contain website or email (do not override phone)
                         ref_texts = find_key(detail_data, "referralAssistanceTexts") or []
                         if isinstance(ref_texts, list):
                             for txt in ref_texts:
                                 if not isinstance(txt, str):
                                     continue
-                                # URL
-                                murl = re.search(r'(https?://[\w\-._~:/?#\[\]@!$&'""'()*+,;=%]+)', txt)
+                                # URL (simple heuristic)
+                                murl = re.search(r'(https?://[^\s"<]+)', txt)
                                 if murl:
                                     business_data["website"] = business_data.get("website") or murl.group(1).strip()
+
+                                # Email (look for common email pattern)
+                                memail = re.search(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})', txt)
+                                if memail:
+                                    found_email = memail.group(1).strip().rstrip('.,;:')
+                                    if not business_data.get("email"):
+                                        business_data["email"] = found_email
+                                        logger.info(f"------ Extracted email from referralAssistanceTexts: {found_email}")
 
                         # Also check schema.org telephone if phone not present (but prefer main page phone)
                         if not business_data.get("phone"):
@@ -235,10 +244,19 @@ class BBBScraper:
 
                         # Extract email from contactInformation (primary source)
                         if contact_info and isinstance(contact_info, dict):
-                            email = (contact_info.get("emailAddress") or "").strip()
+                            email = clean_obfuscated_email((contact_info.get("emailAddress") or "").strip())
                             if email:
                                 business_data["email"] = email
-                                logger.info(f"Extracted email from contactInformation: {email}")
+                                logger.info(f"------ Extracted email from contactInformation: {email}")
+                            
+                            additional_websites = contact_info.get("additionalWebsiteAddresses", [])
+                            if isinstance(additional_websites, list) and additional_websites:
+                                website = additional_websites[0].strip()
+                                if website:
+                                    business_data["website"] = website
+                                    logger.info(
+                                        f"Extracted additional website from contactInformation: {website}"
+                                    )
 
             except Exception as e:
                 logger.warning(f"Failed to fetch/parse detail page {report_url}: {e}")
@@ -281,26 +299,26 @@ class BBBScraper:
             html = None
             for attempt in range(MAX_RETRIES):
                 try:
-                    logger.info(f"Fetching page {page} for {search_url} (attempt {attempt+1})")
+                    logger.info(f"--- Fetching page {page} for {search_url} (attempt {attempt+1})")
                     resp = self.session.get(search_url, params=params, timeout=REQUEST_TIMEOUT,
                                             proxies=PROXY if PROXY else None)
-                    logger.info(f"Received status {resp.status_code} for page {page}")
+                    logger.info(f"--- Received status {resp.status_code} for page {page}")
                     if resp.status_code == 200:
                         html = resp.text
                         success = True
                         break
                     elif resp.status_code == 429:
-                        logger.warning("Rate limited while fetching HTML; backing off")
+                        logger.warning("--- Rate limited while fetching HTML; backing off")
                         time.sleep(RETRY_DELAY * (attempt + 1))
                     else:
-                        logger.warning(f"Unexpected status {resp.status_code} fetching HTML page")
+                        logger.warning(f"--- Unexpected status {resp.status_code} fetching HTML page")
                 except requests.exceptions.RequestException as e:
-                    logger.warning(f"HTML request failed: {e}")
+                    logger.warning(f"--- HTML request failed: {e}")
                     time.sleep(RETRY_DELAY)
 
-            logger.info(f"Finished HTML fetch attempts for page {page}")
+            logger.info(f"--- Finished HTML fetch attempts for page {page}")
             if not success or not html:
-                logger.error(f"Failed to fetch HTML for page {page}: {search_url}")
+                logger.error(f"--- Failed to fetch HTML for page {page}: {search_url}")
                 break
 
             # Try to extract the embedded JSON from window.__PRELOADED_STATE__
@@ -362,11 +380,15 @@ class BBBScraper:
                 raw_name = record.get('businessName') or ''
                 name_key = clean_html_tags(raw_name).strip().lower()
                 if name_key in seen_names:
-                    logger.info(f"Skipping duplicate business name in city results: {raw_name}")
+                    logger.info(f"---!!! Skipping duplicate business name in city results: {raw_name}")
                     continue
 
-                seen_names.add(name_key)
-                collected.append(self.extract_business_data(record, source_url=search_url))
+                retv = self.extract_business_data(record, source_url=search_url)
+                if retv["email"]:
+                    seen_names.add(name_key)
+                    collected.append(retv)
+                else:
+                    logger.info(f"---!!! Excluding Business '{raw_name}' - no email found")
 
             logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
 

@@ -82,6 +82,22 @@ def normalize_email(email: Optional[str]) -> Optional[str]:
     
     return None
 
+def clean_obfuscated_email(raw_email: str) -> str:
+    if not raw_email:
+        return ""
+
+    email = raw_email.strip()
+
+    # Remove wrapping noise like !~xK_bL!
+    email = re.sub(r"!~.*?!", "", email)
+
+    # Replace common obfuscation patterns
+    email = email.replace("__at__", "@")
+    email = email.replace("__dot__", ".")
+    email = email.replace("[at]", "@").replace("(at)", "@")
+    email = email.replace("[dot]", ".").replace("(dot)", ".")
+
+    return email.strip()
 
 def normalize_address(address: Optional[str], city: Optional[str], 
                      state: Optional[str], postal: Optional[str]) -> str:

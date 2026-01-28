@@ -22,6 +22,7 @@ venv.bak/
 # Project specific
 logs/*.log
 data/*.csv
+data/*.json
 .env
 
 # OS
