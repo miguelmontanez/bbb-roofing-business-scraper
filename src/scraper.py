@@ -179,19 +179,118 @@ class BBBScraper:
             "state": (record.get("state") or "").strip().upper(),
             "postal_code": (record.get("postalcode") or "").strip(),
             "phone": phone.strip() if phone else "",
-            "email": "",  # BBB doesn't typically provide email in search results
-            "website": "",  # Usually not in search results
-            "entity_type": "",  # Not available in search results
-            "business_started": "",  # Not available in search results
-            "incorporated_date": "",  # Not available in search results
-            "principal_contact": "",  # Not available in search results
+            "email": "",  # may be available on detail page
+            "website": "",  # may be available on detail page
+            "entity_type": "",
+            "business_started": "",
+            "incorporated_date": "",
+            "principal_contact": "",
             "business_categories": categories_str,
             "rating": (record.get("rating") or ""),
             "bbb_member": str(record.get("bbbMember", False)).lower(),
             "bbb_accredited": str(record.get("accreditedCharity", False)).lower(),
             "source_url": report_url
         }
-        
+
+        # If there is a detail/report URL, try to fetch the detailed page and extract
+        # additional fields such as principal contacts, dates, entity type, website,
+        # phone and email.
+        if report_url:
+            try:
+                self._respect_rate_limit()
+                resp = self.session.get(report_url, timeout=REQUEST_TIMEOUT,
+                                        proxies=PROXY if PROXY else None)
+                if resp.status_code == 200:
+                    detail_html = resp.text
+                    # Try to extract embedded JSON state from the detail page
+                    detail_data = None
+                    try:
+                        m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', detail_html, re.DOTALL)
+                        if m:
+                            detail_data = json.loads(m.group(1))
+                        else:
+                            # Some detail pages may include a JSON LD or other embedded data
+                            m2 = re.search(r'<script type="application/ld\+json">(.*?)</script>', detail_html, re.DOTALL)
+                            if m2:
+                                try:
+                                    detail_data = json.loads(m2.group(1))
+                                except Exception:
+                                    detail_data = None
+                    except Exception:
+                        detail_data = None
+
+                    # Helper to recursively find a key in nested dicts/lists
+                    def find_key(obj, key):
+                        if isinstance(obj, dict):
+                            if key in obj:
+                                return obj[key]
+                            for v in obj.values():
+                                res = find_key(v, key)
+                                if res is not None:
+                                    return res
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                res = find_key(item, key)
+                                if res is not None:
+                                    return res
+                        return None
+
+                    if detail_data:
+                        # Dates
+                        dates = find_key(detail_data, "dates") or {}
+                        if isinstance(dates, dict):
+                            business_data["incorporated_date"] = dates.get("incorporated") or business_data["incorporated_date"]
+                            business_data["business_started"] = dates.get("businessStart") or business_data["business_started"]
+
+                        # Entity type
+                        type_of_entity = find_key(detail_data, "typeOfEntity") or {}
+                        if isinstance(type_of_entity, dict):
+                            business_data["entity_type"] = type_of_entity.get("name") or business_data["entity_type"]
+
+                        # Principal contact(s)
+                        employees = find_key(detail_data, "employee") or find_key(detail_data, "employees") or []
+                        contacts = []
+                        if isinstance(employees, list):
+                            for e in employees:
+                                given = (e.get("givenName") or e.get("given_name") or "").strip()
+                                family = (e.get("familyName") or e.get("family_name") or "").strip()
+                                if given or family:
+                                    contacts.append(f"{given} {family}".strip())
+                        if contacts:
+                            business_data["principal_contact"] = "; ".join(contacts)
+
+                        # Referral assistance texts may contain phone and website
+                        ref_texts = find_key(detail_data, "referralAssistanceTexts") or []
+                        if isinstance(ref_texts, list):
+                            for txt in ref_texts:
+                                if not isinstance(txt, str):
+                                    continue
+                                # Phone
+                                mphone = re.search(r'Phone Number:\s*([0-9()\-+. \\]+)', txt)
+                                if mphone:
+                                    business_data["phone"] = business_data.get("phone") or mphone.group(1).strip()
+                                # URL
+                                murl = re.search(r'(https?://[\w\-._~:/?#\[\]@!$&'""'()*+,;=%]+)', txt)
+                                if murl:
+                                    business_data["website"] = business_data.get("website") or murl.group(1).strip()
+
+                        # Real-time listed emails
+                        emails_raw = find_key(detail_data, "getListedRealTimeEmails")
+                        if emails_raw:
+                            try:
+                                if isinstance(emails_raw, str):
+                                    parsed = json.loads(emails_raw)
+                                else:
+                                    parsed = emails_raw
+                                if isinstance(parsed, list) and parsed:
+                                    business_data["email"] = parsed[0].get("email") if isinstance(parsed[0], dict) else str(parsed[0])
+                            except Exception:
+                                # leave email blank on parse errors
+                                pass
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch/parse detail page {report_url}: {e}")
+
         return business_data
     
     def scrape_phase_1(self, target_records: int = 300) -> List[Dict]:
