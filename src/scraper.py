@@ -39,77 +39,6 @@ class BBBScraper:
             time.sleep((1 / RATE_LIMIT) - elapsed)
         self.last_request_time = time.time()
     
-    def _make_request(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
-        """
-        Make HTTP request with retry logic
-        
-        Args:
-            url: Request URL
-            params: Query parameters
-            
-        Returns:
-            JSON response or None on failure
-        """
-        self._respect_rate_limit()
-        
-        for attempt in range(MAX_RETRIES):
-            try:
-                logger.info(f"Request attempt {attempt + 1}/{MAX_RETRIES}: {url}")
-                
-                response = self.session.get(
-                    url,
-                    params=params,
-                    timeout=REQUEST_TIMEOUT,
-                    proxies=PROXY if PROXY else None
-                )
-                
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code == 429:
-                    # Rate limited
-                    logger.warning("Rate limited by BBB.org, waiting...")
-                    time.sleep(RETRY_DELAY * (attempt + 1))
-                else:
-                    logger.warning(f"HTTP {response.status_code}: {response.reason}")
-                    
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Request failed: {str(e)}")
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-        
-        logger.error(f"Failed to fetch after {MAX_RETRIES} attempts: {url}")
-        return None
-    
-    def search_businesses(self, location: str, category: str = "Roofing", 
-                         page: int = 1) -> Optional[Dict]:
-        """
-        Search for businesses on BBB.org
-        
-        Args:
-            location: City, State or ZIP code
-            category: Business category
-            page: Page number
-            
-        Returns:
-            Search results or None
-        """
-        url = f"{self.base_url}/localservice"
-        
-        params = {
-            "location": location,
-            "category": category,
-            "pageNumber": page
-        }
-        
-        logger.info(f"Searching: {location}, {category}, Page {page}")
-        
-        response = self._make_request(url, params)
-        
-        if response and "searchResult" in response:
-            return response["searchResult"]
-        
-        return None
-    
     def is_valid_record(self, record: Dict) -> bool:
         """
         Validate if a business record meets inclusion criteria
@@ -123,26 +52,31 @@ class BBBScraper:
         # Check business name contains required keyword
         business_name = (record.get("businessName") or "").strip()
         if not contains_keyword(business_name, KEYWORD_FILTERS):
+            logger.info(f"---!!! Excluding Business Name '{business_name}' - does not match keywords")
             return False
         
         # Check state is in lower 48
         state = (record.get("state") or "").strip()
         if state not in LOWER_48_STATES:
+            logger.info(f"---!!! Excluding State '{state}' - state {state} not in lower 48")
             return False
         
         # Check address exists
         address = (record.get("address") or "").strip()
         if not address or len(address) < 3:
+            logger.info(f"---!!! Excluding Address '{address}' - invalid address")
             return False
         
         # Check city exists
         city = (record.get("city") or "").strip()
         if not city or len(city) < 2:
+            logger.info(f"---!!! Excluding City '{city}' - invalid city")
             return False
         
         # Check postal code exists
         postal = (record.get("postalcode") or "").strip()
         if not postal:
+            logger.info(f"---!!! Excluding Postal Code '{postal}' - missing postal code")
             return False
         
         return True
@@ -242,7 +176,6 @@ class BBBScraper:
                                     return res
                         return None
 
-                    logger.info(f"Firstar==>>detail_data type: {detail_data}")
                     if detail_data:
                         # Dates
                         dates = find_key(detail_data, "dates") or {}
@@ -255,45 +188,30 @@ class BBBScraper:
                         if isinstance(type_of_entity, dict):
                             business_data["entity_type"] = type_of_entity.get("name") or business_data["entity_type"]
 
-                        # Principal contact(s)
+                        # Principal contact(s) - Extract from contactInformation
                         contacts = []
-
-                        # If schema.org JSON-LD is present and has 'employee', prefer it
-                        if isinstance(detail_data, (list, dict)):
-                            schema_employees = None
-                            logger.info(f"Firstar==>>Checking for schema.org employees {isinstance(detail_data, list)}, {isinstance(detail_data, dict)}")
-                            if isinstance(detail_data, list):
-                                logger.info(f"Firstar==>>detail_data is a list with {len(detail_data)} items")
-                                # Find an object that contains 'employee'
-                                for obj in detail_data:
-                                    if isinstance(obj, dict) and obj.get("employee"):
-                                        logger.info(f"Firstar==>>detail_data->employee_object {obj}")
-                                        schema_employees = obj.get("employee")
-                                        break
-                            elif isinstance(detail_data, dict) and detail_data.get("employee"):
-                                schema_employees = detail_data.get("employee")
-                                logger.info(f"Firstar==>>detail_data schema_employees {schema_employees}")
-                            else:
-                                logger.info("Firstar==>>detail_data has no employee key")
-
-                            if schema_employees and isinstance(schema_employees, list):
-                                for e in schema_employees:
-                                    given = (e.get("givenName") or e.get("given_name") or "").strip()
-                                    family = (e.get("familyName") or e.get("family_name") or "").strip()
-                                    if given or family:
-                                        contacts.append(f"{given} {family}".strip())
-
-                        # Fallback to other embedded structures if no schema.org employees found
-                        if not contacts:
-                            employees = find_key(detail_data, "employee") or find_key(detail_data, "employees") or []
-                            if isinstance(employees, list):
-                                for e in employees:
-                                    if not isinstance(e, dict):
-                                        continue
-                                    given = (e.get("givenName") or "").strip()
-                                    family = (e.get("familyName") or "").strip()
-                                    if given or family:
-                                        contacts.append(f"{given} {family}".strip())
+                        contact_info = find_key(detail_data, "contactInformation")
+                        
+                        if contact_info and isinstance(contact_info, dict):
+                            # Look for principal contact in contacts array
+                            contacts_list = contact_info.get("contacts", [])
+                            if isinstance(contacts_list, list):
+                                for contact in contacts_list:
+                                    if isinstance(contact, dict) and contact.get("isPrincipal"):
+                                        # Extract name components
+                                        name_obj = contact.get("name", {})
+                                        if isinstance(name_obj, dict):
+                                            first = (name_obj.get("first") or "").strip()
+                                            middle = (name_obj.get("middle") or "").strip()
+                                            last = (name_obj.get("last") or "").strip()
+                                            
+                                            # Build full name: first middle last
+                                            full_name_parts = [first, middle, last]
+                                            full_name = " ".join([p for p in full_name_parts if p])
+                                            
+                                            if full_name:
+                                                contacts.append(full_name)
+                                            break  # Only take the first principal contact
 
                         if contacts:
                             business_data["principal_contact"] = "; ".join(contacts)
@@ -315,87 +233,17 @@ class BBBScraper:
                             if tel:
                                 business_data["phone"] = tel.strip()
 
-                        # Real-time listed emails
-                        emails_raw = find_key(detail_data, "getListedRealTimeEmails")
-                        if emails_raw:
-                            try:
-                                if isinstance(emails_raw, str):
-                                    parsed = json.loads(emails_raw)
-                                else:
-                                    parsed = emails_raw
-                                if isinstance(parsed, list) and parsed:
-                                    business_data["email"] = parsed[0].get("email") if isinstance(parsed[0], dict) else str(parsed[0])
-                            except Exception:
-                                # leave email blank on parse errors
-                                pass
+                        # Extract email from contactInformation (primary source)
+                        if contact_info and isinstance(contact_info, dict):
+                            email = (contact_info.get("emailAddress") or "").strip()
+                            if email:
+                                business_data["email"] = email
+                                logger.info(f"Extracted email from contactInformation: {email}")
 
             except Exception as e:
                 logger.warning(f"Failed to fetch/parse detail page {report_url}: {e}")
 
         return business_data
-    
-    def scrape_phase_1(self, target_records: int = 300) -> List[Dict]:
-        """
-        Scrape Phase 1 data (test scrape)
-        
-        Args:
-            target_records: Number of records to collect
-            
-        Returns:
-            List of business records
-        """
-        logger.info(f"Starting Phase 1 scrape - Target: {target_records} records")
-        
-        # Sample locations to search
-        locations = [
-            "California, CA",
-            "Texas, TX", 
-            "Florida, FL",
-            "New York, NY",
-            "Pennsylvania, PA"
-        ]
-        
-        records_collected = 0
-        all_records = []
-        
-        for location in locations:
-            if records_collected >= target_records:
-                break
-            
-            page = 1
-            while records_collected < target_records:
-                results = self.search_businesses(location, page=page)
-                
-                if not results or not results.get("results"):
-                    break
-                
-                for record in results["results"]:
-                    if records_collected >= target_records:
-                        break
-                    
-                    if self.is_valid_record(record):
-                        business_data = self.extract_business_data(record)
-                        all_records.append(business_data)
-                        records_collected += 1
-                        logger.info(f"Collected record {records_collected}: {business_data['business_name']}")
-                    else:
-                        self.invalid_records.append(record.get("businessName", "Unknown"))
-                    break #FIRSTAR-TEST
-                
-                # Check if there are more pages
-                total_pages = results.get("totalPages", 1)
-                if page >= total_pages:
-                    break
-                
-                page += 1
-
-                break #FIRSTAR-TEST
-            break #FIRSTAR-TEST
-        
-        self.valid_records = all_records
-        logger.info(f"Phase 1 complete. Collected {len(all_records)} valid records.")
-        
-        return all_records
 
     def scrape_city_search_url(self, search_url: str, target_records: Optional[int] = None) -> List[Dict]:
         """
@@ -446,8 +294,6 @@ class BBBScraper:
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"HTML request failed: {e}")
                     time.sleep(RETRY_DELAY)
-                
-                break  #FIRSTAR-TEST
 
             logger.info(f"Finished HTML fetch attempts for page {page}")
             if not success or not html:
@@ -509,8 +355,6 @@ class BBBScraper:
                     collected.append(self.extract_business_data(record, source_url=search_url))
                 else:
                     self.invalid_records.append(record.get('businessName', 'Unknown'))
-                
-                break  #FIRSTAR-TEST
 
             logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
 
@@ -519,21 +363,7 @@ class BBBScraper:
 
             page += 1
 
-            break  #FIRSTAR-TEST
-
         self.valid_records = collected
         logger.info(f"Completed city scrape. Collected {len(collected)} valid records.")
         return collected
-    
-    def get_statistics(self) -> Dict:
-        """
-        Get scraping statistics
-        
-        Returns:
-            Dictionary of statistics
-        """
-        return {
-            "valid_records": len(self.valid_records),
-            "invalid_records": len(self.invalid_records),
-            "total_processed": len(self.valid_records) + len(self.invalid_records)
-        }
+

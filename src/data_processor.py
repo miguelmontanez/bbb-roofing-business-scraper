@@ -286,15 +286,3 @@ class DataProcessor:
         
         return unique_records
     
-    def get_statistics(self) -> Dict:
-        """
-        Get processing statistics
-        
-        Returns:
-            Statistics dictionary
-        """
-        return {
-            "cleaned_records": len(self.cleaned_records),
-            "validation_errors": len(self.validation_errors),
-            "total_errors": sum(len(e["errors"]) for e in self.validation_errors)
-        }
