@@ -5,6 +5,7 @@ Main scraper class for collecting BBB roofing contractor data
 import logging
 import time
 import json
+import re
 from typing import List, Dict, Optional
 import requests
 from urllib.parse import urlencode
@@ -251,6 +252,128 @@ class BBBScraper:
         logger.info(f"Phase 1 complete. Collected {len(all_records)} valid records.")
         
         return all_records
+
+    def scrape_city_search_url(self, search_url: str, target_records: Optional[int] = None) -> List[Dict]:
+        """
+        Scrape a BBB search results page (HTML) for a single city URL, following pagination.
+
+        The BBB search page embeds the results JSON in a window.__PRELOADED_STATE__ JavaScript
+        variable. This method requests the HTML for successive pages and extracts that JSON to
+        collect business records.
+
+        Args:
+            search_url: Full search URL (e.g. the sample Chicago URL)
+            target_records: Optional maximum number of business records to collect
+
+        Returns:
+            List of normalized business dictionaries
+        """
+        logger.info(f"Scraping city URL with pagination: {search_url}")
+
+        collected = []
+        page = 1
+
+        while True:
+            if target_records and len(collected) >= target_records:
+                break
+
+            params = {"page": page}
+
+            # Respect rate limit before each HTML request
+            self._respect_rate_limit()
+
+            success = False
+            html = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    logger.info(f"Fetching page {page} for {search_url} (attempt {attempt+1})")
+                    resp = self.session.get(search_url, params=params, timeout=REQUEST_TIMEOUT,
+                                            proxies=PROXY if PROXY else None)
+                    logger.info(f"Received status {resp.text} for page {page}")
+                    if resp.status_code == 200:
+                        html = resp.text
+                        success = True
+                        break
+                    elif resp.status_code == 429:
+                        logger.warning("Rate limited while fetching HTML; backing off")
+                        time.sleep(RETRY_DELAY * (attempt + 1))
+                    else:
+                        logger.warning(f"Unexpected status {resp.status_code} fetching HTML page")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"HTML request failed: {e}")
+                    time.sleep(RETRY_DELAY)
+
+            logger.info(f"Finished HTML fetch attempts for page {page}")
+            if not success or not html:
+                logger.error(f"Failed to fetch HTML for page {page}: {search_url}")
+                break
+
+            # Try to extract the embedded JSON from window.__PRELOADED_STATE__
+            data = None
+            try:
+                marker = 'window.__PRELOADED_STATE__'
+                idx = html.find(marker)
+                if idx != -1:
+                    # Find start of JSON (first '{' after the marker)
+                    brace_idx = html.find('{', idx)
+                    if brace_idx != -1:
+                        # Heuristic: find the script end after the marker and trim to last closing '}' before it
+                        script_end = html.find('</script>', brace_idx)
+                        snippet = html[brace_idx:script_end] if script_end != -1 else html[brace_idx:]
+                        # Find last occurrence of '};' which usually ends the assignment
+                        last_obj_end = snippet.rfind('};')
+                        if last_obj_end != -1:
+                            json_text = snippet[:last_obj_end+1]
+                        else:
+                            # fallback to regex capture
+                            m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', html, re.DOTALL)
+                            json_text = m.group(1) if m else None
+
+                        if json_text:
+                            data = json.loads(json_text)
+                else:
+                    # fallback: try regex across whole HTML
+                    m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', html, re.DOTALL)
+                    if m:
+                        data = json.loads(m.group(1))
+            except Exception as e:
+                logger.warning(f"Failed to parse embedded JSON on page {page}: {e}")
+
+            if not data:
+                logger.error(f"No embedded preloaded state found on page {page}")
+                break
+
+            search_result = data.get('searchResult') or data.get('page', {}).get('searchResult') or data.get('page', {}).get('searchResult')
+            if not search_result:
+                # Some pages embed under top-level 'searchResult'
+                search_result = data.get('searchResult')
+
+            if not search_result:
+                logger.error(f"No searchResult object found on page {page}")
+                break
+
+            results = search_result.get('results', [])
+            total_pages = search_result.get('totalPages', 1)
+
+            for record in results:
+                if target_records and len(collected) >= target_records:
+                    break
+
+                if self.is_valid_record(record):
+                    collected.append(self.extract_business_data(record, source_url=search_url))
+                else:
+                    self.invalid_records.append(record.get('businessName', 'Unknown'))
+
+            logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
+
+            if page >= total_pages:
+                break
+
+            page += 1
+
+        self.valid_records = collected
+        logger.info(f"Completed city scrape. Collected {len(collected)} valid records.")
+        return collected
     
     def get_statistics(self) -> Dict:
         """
