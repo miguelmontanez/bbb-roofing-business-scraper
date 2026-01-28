@@ -1,125 +1,150 @@
 # BBB Roofing Contractor Scraper
 
-A Python-based web scraper to collect roofing contractor business records from BBB.org across the lower 48 United States.
+A Python-based web scraper to collect roofing contractor business records from BBB.org across all US cities.
 
-## Project Overview
+## Quick Start
 
-This project scrapes business data from BBB.org in two phases:
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
 
-## Business Inclusion Criteria
+### 2. Extract City List (First Time Only)
+```bash
+python extract_city.py
+```
 
-Each business must meet ALL of the following:
-- Located in the lower 48 U.S. states
-- Has a physical or mailing address
-- Business name includes at least one of: `roof`, `roofing`, `roofer`, `exteriors`
+### 3. Run Scraper
 
-## Required Data Fields
+**Test run (5 cities, 200 records limit):**
+```bash
+python scrape_all_cities.py --records 200 --reset
+```
 
-- Business name
-- Mailing address (street, city, state, ZIP)
-- Principal contact(s) / owner / key contact
-- Business incorporated date
-- Business started / year established
-- Entity type (LLC, Inc., Corporation, etc.)
-- Website URL
-- Phone number
-- Email address
-- Business categories
-- Source URL (for verification)
+**Resume from progress:**
+```bash
+python scrape_all_cities.py --pause
+```
+
+**Full scrape (all cities):**
+```bash
+python scrape_all_cities.py
+```
+
+**With custom options:**
+```bash
+python scrape_all_cities.py --max-cities 1000 --records 5000 --records-per-city 50
+```
+
+## Command Options
+
+### scrape_all_cities.py
+
+| Option | Description |
+|--------|-------------|
+| `--reset` | Clear progress and start from first city |
+| `--pause` | Resume from last processed city |
+| `--records N` | Total record limit (stops when reached) |
+| `--records-per-city N` | Max records per city |
+| `--max-cities N` | Process only N cities |
+| `--skip-cities N` | Skip first N cities |
+
+### extract_city.py
+
+Generates the list of all US cities from `assets/us_cities.csv`:
+```bash
+python extract_city.py
+```
+Output: `assets/display_texts.json` (28,322 cities)
+
+### run_city_scrape.py
+
+Scrape a single city by search URL:
+```bash
+python run_city_scrape.py
+```
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `data/all_cities_records.csv` | All scraped roofing contractors |
+| `data/scrape_progress.json` | Progress tracking (for resume) |
+| `data/scrape_summary.json` | Session statistics |
+| `logs/scraper.log` | Detailed execution log |
+
+## Data Collected
+
+For each roofing contractor:
+- Business name (HTML tags removed)
+- Address (street, city, state, ZIP)
+- Phone & Email
+- Website
+- Principal contact
+- Entity type
+- Business dates
+- Categories
+- BBB rating & status
+- Source URL
+
+## Features
+
+✓ Incremental saving (progress saved after each city)  
+✓ Resume capability (--pause flag)  
+✓ Record limits (stop at X total records)  
+✓ HTML tag cleanup (removes <em>, <strong>, etc)  
+✓ Clear logging (structured, easy to follow)  
+✓ Unicode compatible (no encoding errors on Windows)  
+✓ Rate limiting (1 req/sec, respects BBB.org)  
+
+## Configuration
+
+Edit `config.py` to adjust:
+- `RATE_LIMIT` - Requests per second
+- `MAX_RETRIES` - Retry failed requests
+- `REQUEST_TIMEOUT` - Request timeout seconds
+- `RETRY_DELAY` - Delay between retries
 
 ## Project Structure
 
 ```
-bbb-roof-company-scraper/
+.
+├── scrape_all_cities.py      # Main scraper (all cities)
+├── run_city_scrape.py        # Single city scraper
+├── extract_city.py           # Generate city list
+├── extract_city_from_bbb.py  # Extract from BBB
+│
 ├── src/
-│   ├── scraper.py           # Main scraper class
-│   ├── data_processor.py    # Data validation and cleaning
-│   ├── csv_exporter.py      # CSV export functionality
-│   └── utils.py             # Utility functions
-├── data/
-│   └── phase1_records.csv   # Phase 1 output (300 records)
-├── logs/
-│   └── scraper.log          # Application logs
-├── config.py                # Configuration settings
-├── main.py                  # Entry point
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
+│   ├── scraper.py            # Scraper class
+│   ├── csv_exporter.py       # CSV export
+│   └── utils.py              # Utilities (including HTML cleanup)
+│
+├── data/                      # Output directory
+├── logs/                      # Log files
+├── config.py                  # Configuration
+├── README.md                  # This file
+└── requirements.txt           # Dependencies
 ```
 
-## Setup
+## Dependencies
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure settings** in `config.py` (optional)
-
-3. **Run the scraper:**
-   ```bash
-   python main.py
-   ```
-
-## Usage
-
-```bash
-python main.py
-```
-
-### Custom Configuration
-
-```bash
-python main.py --records 300 --output data/custom_output.csv
-```
-
-## Output Format
-
-- **Format**: CSV (Excel-compatible)
-- **Encoding**: UTF-8
-- **One row per business**
-- **No duplicate records**
-- **Missing data left blank** (no "N/A" placeholders)
-
-## Quality Assurance
-
-Validation checks:
-- ✓ Accurate keyword filtering
-- ✓ Consistent formatting
-- ✓ Valid addresses
-- ✓ Reasonable field completeness
+- `requests` - HTTP requests
+- Standard library: `json`, `csv`, `logging`, `re`
 
 ## Logging
 
-Application logs are written to `logs/scraper.log` with:
-- Timestamp
-- Log level (INFO, WARNING, ERROR)
-- Message content
+All operations logged to:
+- Console (stdout)
+- File: `logs/scraper.log`
 
-## Error Handling
+Log format: `[TIMESTAMP] [LEVEL] [MESSAGE]`
 
-- Network errors are logged and retried
-- Invalid data is flagged and excluded
-- Rate limiting respected
-- Graceful degradation for missing fields
-
-## Requirements
-
-- Python 3.8+
-- requests
-- beautifulsoup4
-- pandas
-- python-dotenv
-- lxml
-
-## Notes
-
-- BBB.org API endpoints are reverse-engineered from browser requests
-- Rate limiting is implemented to respect server resources
-- All data collection complies with BBB.org's terms of service
-- Source URLs are preserved for verification purposes
-
-## Status
-
-- [x] Project structure created
-- [ ] scraper implementation
-- [ ] validation and testing
+Common log prefixes:
+- `[SUCCESS]` - Operation completed
+- `[ERROR]` - Error occurred
+- `[WARNING]` - Warning message
+- `[INFO]` - Information
+- `[CONFIG]` - Configuration
+- `[ACTION]` - Action being taken
+- `[NO-RESULTS]` - City has no contractors
+- `[LIMIT-REACHED]` - Record limit hit

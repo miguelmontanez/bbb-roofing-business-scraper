@@ -15,7 +15,7 @@ from config import (
     RECORDS_PER_PAGE, KEYWORD_FILTERS, LOWER_48_STATES, USER_AGENT,
     RATE_LIMIT, PROXY
 )
-from src.utils import contains_keyword, normalize_state, setup_logging
+from src.utils import contains_keyword, normalize_state, setup_logging, clean_html_tags
 
 logger = logging.getLogger("bbb_scraper")
 
@@ -107,7 +107,7 @@ class BBBScraper:
             report_url = f"https://www.bbb.org{report_url}"
         
         business_data = {
-            "business_name": (record.get("businessName") or "").strip(),
+            "business_name": clean_html_tags(record.get("businessName") or ""),
             "street_address": (record.get("address") or "").strip(),
             "city": (record.get("city") or "").strip(),
             "state": (record.get("state") or "").strip().upper(),

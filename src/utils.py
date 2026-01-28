@@ -18,11 +18,14 @@ def setup_logging() -> logging.Logger:
     app_logger.setLevel(LOG_LEVEL)
     
     # Create handlers
-    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
     file_handler.setLevel(LOG_LEVEL)
     
+    # Console handler with UTF-8 encoding for Windows compatibility
     console_handler = logging.StreamHandler()
     console_handler.setLevel(LOG_LEVEL)
+    if hasattr(console_handler, 'reconfigure'):
+        console_handler.reconfigure(encoding='utf-8')
     
     # Create formatter
     formatter = logging.Formatter(LOG_FORMAT)
@@ -230,5 +233,26 @@ def sanitize_for_csv(value: Optional[str]) -> str:
     
     # Remove problematic characters
     value = value.replace('"', '""')  # Escape quotes
+
+
+def clean_html_tags(text: Optional[str]) -> str:
+    """
+    Remove HTML tags from text (e.g., <em>...</em>, <strong>...</strong>)
+    
+    Args:
+        text: Text potentially containing HTML tags
+        
+    Returns:
+        Cleaned text without HTML tags
+    """
+    if not text:
+        return ""
+    
+    # Remove all HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Clean up extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
     
     return value

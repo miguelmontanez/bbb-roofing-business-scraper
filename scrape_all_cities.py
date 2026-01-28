@@ -231,15 +231,17 @@ def scrape_all_cities(target_records_per_city: int = None,
     processed_cities = len(processed_cities_set)
     records_processed_this_run = 0
     
-    logger.info(f"Starting scrape - Total cities: {total_cities}")
-    logger.info(f"Cities to process: {len(remaining_cities)}")
-    logger.info(f"Target records per city: {target_records_per_city or 'all'}")
-    logger.info(f"Total record limit: {total_record_limit or 'no limit'}")
+    logger.info(f"\n=== SCRAPE STARTED ===")
+    logger.info(f"Total cities available: {total_cities}")
+    logger.info(f"Cities to process this run: {len(remaining_cities)}")
+    logger.info(f"Records per city limit: {target_records_per_city or 'UNLIMITED'}")
+    logger.info(f"Total records limit: {total_record_limit or 'UNLIMITED'}")
+    logger.info(f"=== START SCRAPING ===")
     
     for idx, display_text in enumerate(remaining_cities, 1):
         # Check if record limit reached
         if total_record_limit and total_records_so_far >= total_record_limit:
-            logger.info(f"✓ Record limit reached ({total_records_so_far}/{total_record_limit})")
+            logger.info(f"[LIMIT-REACHED] Record limit reached: {total_records_so_far}/{total_record_limit}")
             break
         
         try:
@@ -272,7 +274,7 @@ def scrape_all_cities(target_records_per_city: int = None,
                     remaining_quota = total_record_limit - total_records_so_far
                     if len(records) > remaining_quota:
                         records_to_save = records[:remaining_quota]
-                        logger.info(f"⚠ Truncating records to respect limit ({len(records)} -> {len(records_to_save)})")
+                        logger.info(f"[INFO] Limiting records to {len(records_to_save)} (from {len(records)})")
                 
                 # Save each record incrementally
                 if records_to_save:
@@ -283,19 +285,19 @@ def scrape_all_cities(target_records_per_city: int = None,
                             total_records_so_far += 1
                             records_processed_this_run += 1
                         else:
-                            logger.warning(f"Failed to save record for {city}, {state}")
+                            logger.warning(f"[ERROR] Failed to save record for {city}, {state}")
                     
-                    logger.info(f"✓ Saved {saved_count} records from {city}, {state}")
+                    logger.info(f"[SUCCESS] City {city},{state}: Saved {saved_count} records (Total: {total_records_so_far})")
                 else:
-                    logger.warning(f"✗ No records found for {city}, {state}")
+                    logger.info(f"[NO-RESULTS] City {city},{state}: No contractors found")
                 
                 processed_cities += 1
                 
             except Exception as e:
-                logger.error(f"✗ Error scraping {city}, {state}: {e}")
+                logger.error(f"[ERROR] Exception scraping {city},{state}: {str(e)}")
         
         except Exception as e:
-            logger.error(f"Error processing city entry '{display_text}': {e}")
+            logger.error(f"[ERROR] Invalid city entry '{display_text}': {str(e)}")
         
         # Save progress after each city
         progress["processed_cities"] = list(processed_cities_set | {display_text})
@@ -303,14 +305,14 @@ def scrape_all_cities(target_records_per_city: int = None,
         progress["timestamp_last_update"] = datetime.now().isoformat()
         save_progress(progress)
     
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Scraping session complete!")
-    logger.info(f"  Records collected this session: {records_processed_this_run}")
-    logger.info(f"  Total records collected (all time): {total_records_so_far}")
-    logger.info(f"  Cities processed: {processed_cities}/{total_cities}")
-    logger.info(f"  CSV saved to: {OUTPUT_CSV}")
-    logger.info(f"  Progress saved to: {PROGRESS_TRACKING_JSON}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"\n=== SCRAPE SESSION COMPLETE ===")
+    logger.info(f"Session Records Collected: {records_processed_this_run}")
+    logger.info(f"Total Records (All-Time): {total_records_so_far}")
+    logger.info(f"Cities Processed This Run: {processed_cities - len(processed_cities_set)}/{len(remaining_cities)}")
+    logger.info(f"Total Cities Processed Ever: {processed_cities}/{total_cities}")
+    logger.info(f"Output CSV: {OUTPUT_CSV}")
+    logger.info(f"Progress File: {PROGRESS_TRACKING_JSON}")
+    logger.info(f"=== END OF SESSION ===\n")
     
     return True
 
@@ -343,22 +345,22 @@ def save_final_summary(total_records: int) -> bool:
         logger.info(f"Saving summary to {SCRAPE_SUMMARY_JSON}")
         with open(SCRAPE_SUMMARY_JSON, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
-        logger.info(f"✓ Summary saved")
+        logger.info(f"[SUCCESS] Summary saved")
         
         # Validate CSV
         if OUTPUT_CSV.exists():
             is_valid, errors = CSVExporter.validate_csv(str(OUTPUT_CSV))
             if is_valid:
-                logger.info("✓ CSV validation passed")
+                logger.info("[SUCCESS] CSV validation passed")
             else:
-                logger.warning("✗ CSV validation found issues:")
+                logger.warning("[WARNING] CSV validation found issues:")
                 for error in errors[:5]:
                     logger.warning(f"  - {error}")
         
         return True
         
     except Exception as e:
-        logger.error(f"Failed to save summary: {e}")
+        logger.error(f"[ERROR] Failed to save summary: {e}")
         return False
 
 
@@ -412,12 +414,12 @@ def main():
     
     # Handle --reset
     if args.reset:
-        logger.info("Clearing progress file (--reset)")
+        logger.info("[ACTION] Clearing progress file (--reset)")
         clear_progress()
         if OUTPUT_CSV.exists():
             OUTPUT_CSV.unlink()
-            logger.info("✓ Cleared previous CSV file")
-        logger.info("Starting fresh from first city...")
+            logger.info("[SUCCESS] Cleared previous CSV file")
+        logger.info("[INFO] Starting fresh from first city...")
     
     logger.info(f"Options:")
     logger.info(f"  Max cities: {args.max_cities or 'no limit'}")
@@ -442,10 +444,10 @@ def main():
         total_records = progress.get("total_records", 0)
         save_final_summary(total_records)
         
-        logger.info("\n✓ All operations completed successfully!")
+        logger.info("\n[SUCCESS] All operations completed successfully!")
         sys.exit(0)
     else:
-        logger.error("\n✗ Scraping failed")
+        logger.error("\n[ERROR] Scraping failed")
         sys.exit(1)
 
 
