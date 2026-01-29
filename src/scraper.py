@@ -40,44 +40,19 @@ class BBBScraper:
             time.sleep((1 / RATE_LIMIT) - elapsed)
         self.last_request_time = time.time()
     
-    def is_valid_record(self, record: Dict) -> bool:
+    def is_valid_businessName(self, business_name: str = "") -> bool:
         """
-        Validate if a business record meets inclusion criteria
+        Validate if a business name meets inclusion criteria
         
         Args:
-            record: Business record from BBB
+            business_name: Business name
             
         Returns:
-            True if record meets all criteria
+            True if business_name meets validation
         """
         # Check business name contains required keyword
-        business_name = (record.get("businessName") or "").strip()
         if not contains_keyword(business_name, KEYWORD_FILTERS):
             logger.info(f"---!!! Excluding Business Name '{business_name}' - does not match keywords")
-            return False
-        
-        # Check state is in lower 48
-        state = (record.get("state") or "").strip()
-        if state not in LOWER_48_STATES:
-            logger.info(f"---!!! Excluding State of this business '{business_name}' - state {state} not in lower 48")
-            return False
-        
-        # Check address exists
-        address = (record.get("address") or "").strip()
-        if not address or len(address) < 3:
-            logger.info(f"---!!! Excluding Address of this business '{business_name}' - address '{address}' - invalid address")
-            return False
-        
-        # Check city exists
-        city = (record.get("city") or "").strip()
-        if not city or len(city) < 2:
-            logger.info(f"---!!! Excluding City of this business '{business_name}' - city '{city}' - invalid city")
-            return False
-        
-        # Check postal code exists
-        postal = (record.get("postalcode") or "").strip()
-        if not postal:
-            logger.info(f"---!!! Excluding Postal Code of this business '{business_name}' - missing postal code")
             return False
         
         return True
@@ -121,9 +96,6 @@ class BBBScraper:
             "incorporated_date": "",
             "principal_contact": "",
             "business_categories": categories_str,
-            "rating": (record.get("rating") or ""),
-            "bbb_member": str(record.get("bbbMember", False)).lower(),
-            "bbb_accredited": str(record.get("accreditedCharity", False)).lower(),
             "source_url": report_url
         }
 
@@ -139,25 +111,22 @@ class BBBScraper:
                     detail_html = resp.text
                     # Try to extract embedded JSON state from the detail page
                     detail_data = None
+                    additional_data = None
                     try:
                         # Prefer schema.org JSON-LD if present (contains reliable employee info)
-                        m2 = re.search(r'<script type="application/ld\+json">(.*?)</script>', detail_html, re.DOTALL)
-                        schema_ld = None
+                        m2 = re.search(r'<script[^>]*type\s*=\s*["\']?application/ld\+json["\']?[^>]*>(.*?)</script>', detail_html, re.DOTALL | re.IGNORECASE)
                         if m2:
                             try:
-                                schema_ld = json.loads(m2.group(1))
+                                additional_data = json.loads(m2.group(1))
                             except Exception:
-                                schema_ld = None
+                                additional_data = None
 
                         # Fallback to window.__PRELOADED_STATE__ if no JSON-LD
-                        if schema_ld is not None:
-                            detail_data = schema_ld
+                        m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', detail_html, re.DOTALL)
+                        if m:
+                            detail_data = json.loads(m.group(1))
                         else:
-                            m = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?})\s*;', detail_html, re.DOTALL)
-                            if m:
-                                detail_data = json.loads(m.group(1))
-                            else:
-                                detail_data = None
+                            detail_data = None
                     except Exception:
                         detail_data = None
 
@@ -176,87 +145,62 @@ class BBBScraper:
                                 if res is not None:
                                     return res
                         return None
+                    
+                    if additional_data:
+                        # Principal contact(s) - Extract from contactInformation
+                        employees = find_key(additional_data, "employee") or []
+                        if isinstance(employees, list):
+                            contacts = []
+                            for emp in employees:
+                                if not isinstance(emp, dict):
+                                    continue
+                                name_parts = [
+                                    emp.get("honorificPrefix"),
+                                    emp.get("givenName"),
+                                    emp.get("familyName"),
+                                ]
+                                name = " ".join(p.strip() for p in name_parts if p)
+                                job_title = (emp.get("jobTitle") or "").strip()
+                                if job_title:
+                                    name = f"{name}, {job_title}"
+                                if name:
+                                    contacts.append(name)
+                            if contacts:
+                                business_data["principal_contact"] = "|".join(contacts)
+                            logger.info(f"------ Extracted principal contacts: {contacts}")
 
                     if detail_data:
                         # Dates
                         dates = find_key(detail_data, "dates") or {}
                         if isinstance(dates, dict):
-                            business_data["incorporated_date"] = dates.get("incorporated") or business_data["incorporated_date"]
-                            business_data["business_started"] = dates.get("businessStart") or business_data["business_started"]
+                            business_data["incorporated_date"] = (dates.get("incorporated") or "").strip()
+                            business_data["business_started"] = (dates.get("businessStart") or "").strip()
 
                         # Entity type
                         type_of_entity = find_key(detail_data, "typeOfEntity") or {}
                         if isinstance(type_of_entity, dict):
-                            business_data["entity_type"] = type_of_entity.get("name") or business_data["entity_type"]
+                            business_data["entity_type"] = (type_of_entity.get("name") or "").strip()
 
-                        # Principal contact(s) - Extract from contactInformation
-                        contacts = []
+                        # Extract email and websites from contactInformation (primary source)
                         contact_info = find_key(detail_data, "contactInformation")
-                        
-                        if contact_info and isinstance(contact_info, dict):
-                            # Look for principal contact in contacts array
-                            contacts_list = contact_info.get("contacts", [])
-                            if isinstance(contacts_list, list):
-                                for contact in contacts_list:
-                                    if isinstance(contact, dict) and contact.get("isPrincipal"):
-                                        # Extract name components
-                                        name_obj = contact.get("name", {})
-                                        if isinstance(name_obj, dict):
-                                            first = (name_obj.get("first") or "").strip()
-                                            middle = (name_obj.get("middle") or "").strip()
-                                            last = (name_obj.get("last") or "").strip()
-                                            
-                                            # Build full name: first middle last
-                                            full_name_parts = [first, middle, last]
-                                            full_name = " ".join([p for p in full_name_parts if p])
-                                            
-                                            if full_name:
-                                                contacts.append(full_name)
-                                            break  # Only take the first principal contact
-
-                        if contacts:
-                            business_data["principal_contact"] = "; ".join(contacts)
-
-                        # Referral assistance texts may contain website or email (do not override phone)
-                        ref_texts = find_key(detail_data, "referralAssistanceTexts") or []
-                        if isinstance(ref_texts, list):
-                            for txt in ref_texts:
-                                if not isinstance(txt, str):
-                                    continue
-                                # URL (simple heuristic)
-                                murl = re.search(r'(https?://[^\s"<]+)', txt)
-                                if murl:
-                                    business_data["website"] = business_data.get("website") or murl.group(1).strip()
-
-                                # Email (look for common email pattern)
-                                memail = re.search(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})', txt)
-                                if memail:
-                                    found_email = memail.group(1).strip().rstrip('.,;:')
-                                    if not business_data.get("email"):
-                                        business_data["email"] = found_email
-                                        logger.info(f"------ Extracted email from referralAssistanceTexts: {found_email}")
-
-                        # Also check schema.org telephone if phone not present (but prefer main page phone)
-                        if not business_data.get("phone"):
-                            tel = find_key(detail_data, "telephone")
-                            if tel:
-                                business_data["phone"] = tel.strip()
-
-                        # Extract email from contactInformation (primary source)
                         if contact_info and isinstance(contact_info, dict):
                             email = clean_obfuscated_email((contact_info.get("emailAddress") or "").strip())
                             if email:
                                 business_data["email"] = email
-                                logger.info(f"------ Extracted email from contactInformation: {email}")
+                                logger.info(f"------ Extracted email: {email}")
                             
                             additional_websites = contact_info.get("additionalWebsiteAddresses", [])
                             if isinstance(additional_websites, list) and additional_websites:
-                                website = additional_websites[0].strip()
-                                if website:
-                                    business_data["website"] = website
-                                    logger.info(
-                                        f"Extracted additional website from contactInformation: {website}"
-                                    )
+                                websites = []
+                                for website in additional_websites:
+                                    website = website.strip()
+                                    if website:
+                                        websites.append(website)
+                                if websites:
+                                    business_data["website"] = "|".join(websites)
+                                logger.info(f"------ Extracted websites: {website}")
+                            else:
+                                logger.info(f"---!!! No websites found in {business_data['business_name']}")
 
             except Exception as e:
                 logger.warning(f"Failed to fetch/parse detail page {report_url}: {e}")
@@ -372,7 +316,7 @@ class BBBScraper:
                 if target_records and len(collected) >= target_records:
                     break
 
-                if not self.is_valid_record(record):
+                if not self.is_valid_businessName(record.get('businessName', '').strip()):
                     self.invalid_records.append(record.get('businessName', 'Unknown'))
                     continue
 
@@ -384,11 +328,11 @@ class BBBScraper:
                     continue
 
                 retv = self.extract_business_data(record, source_url=search_url)
-                if retv["email"]:
+                if retv["street_address"] or retv["email"]:
                     seen_names.add(name_key)
                     collected.append(retv)
                 else:
-                    logger.info(f"---!!! Excluding Business '{raw_name}' - no email found")
+                    logger.info(f"---!!! Excluding Business '{raw_name}' - email or address missing(address: {retv['street_address']}, email: {retv['email']})")
 
             logger.info(f"Page {page} processed: {len(results)} results, collected total {len(collected)}")
 

@@ -145,7 +145,7 @@ class DataProcessor:
         for field in ["business_name", "street_address", "city", "state", 
                       "postal_code", "phone", "email", "website", "entity_type", 
                       "business_started", "incorporated_date", "principal_contact", 
-                      "business_categories", "rating", "source_url"]:
+                      "business_categories", "source_url"]:
             if field in cleaned and cleaned[field]:
                 cleaned[field] = str(cleaned[field]).strip()
             else:

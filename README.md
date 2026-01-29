@@ -130,7 +130,6 @@ For each roofing contractor:
 - Entity type
 - Business dates
 - Categories
-- BBB rating & status
 - Source URL
 
 ## Features
