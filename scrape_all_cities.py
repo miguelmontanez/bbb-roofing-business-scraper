@@ -65,32 +65,51 @@ def generate_csv_filename(records_limit: int = None,
     return DATA_DIR / filename
 
 
-def backup_existing_csvs() -> None:
+def backup_existing_csvs(reset_mode: bool = False, pause_mode: bool = False) -> None:
     """
-    Backup all existing CSV files in data/ directory.
-    Appends current date to filenames to preserve previous runs.
+    Manage existing CSV files based on operation mode.
+    
+    Args:
+        reset_mode: If True, delete all existing CSV files (--reset)
+        pause_mode: If True, skip backup (--pause)
+    
+    Behavior:
+        - reset_mode=True: Delete all CSV files in data/ directory
+        - pause_mode=True: Do nothing (keep existing files for appending)
+        - Neither: Backup existing files with date suffix
     
     Example: all_cities_records.csv -> all_cities_records_2026-01-29.csv
     """
     if not DATA_DIR.exists():
         return
     
-    today = datetime.now().strftime("%Y-%m-%d")
     csv_files = list(DATA_DIR.glob("*.csv"))
     
     if not csv_files:
-        logger.info(f"[INFO] No existing CSV files to backup")
+        logger.info(f"[INFO] No existing CSV files found")
         return
     
-    logger.info(f"[ACTION] Backing up {len(csv_files)} existing CSV file(s)")
-    for csv_path in csv_files:
-        backup_name = csv_path.stem + f"_{today}" + csv_path.suffix
-        backup_path = csv_path.parent / backup_name
-        try:
-            csv_path.rename(backup_path)
-            logger.info(f"[SUCCESS] Backed up: {csv_path.name} -> {backup_name}")
-        except Exception as e:
-            logger.warning(f"[WARNING] Failed to backup {csv_path.name}: {e}")
+    if reset_mode:
+        logger.info(f"[ACTION] Deleting {len(csv_files)} existing CSV file(s) (--reset)")
+        for csv_path in csv_files:
+            try:
+                csv_path.unlink()
+                logger.info(f"[SUCCESS] Deleted: {csv_path.name}")
+            except Exception as e:
+                logger.warning(f"[WARNING] Failed to delete {csv_path.name}: {e}")
+    elif pause_mode:
+        logger.info(f"[INFO] Keeping existing CSV files for appending (--pause)")
+    else:
+        today = datetime.now().strftime("%Y-%m-%d")
+        logger.info(f"[ACTION] Backing up {len(csv_files)} existing CSV file(s)")
+        for csv_path in csv_files:
+            backup_name = csv_path.stem + f"_{today}" + csv_path.suffix
+            backup_path = csv_path.parent / backup_name
+            try:
+                csv_path.rename(backup_path)
+                logger.info(f"[SUCCESS] Backed up: {csv_path.name} -> {backup_name}")
+            except Exception as e:
+                logger.warning(f"[WARNING] Failed to backup {csv_path.name}: {e}")
 
 
 def build_search_url(city: str, state: str) -> str:
@@ -512,8 +531,8 @@ def main():
     output_csv = generate_csv_filename(args.records, args.start_index, args.end_index, args.pause)
     logger.info(f"[CONFIG] Output CSV: {output_csv.name}")
     
-    # Backup existing CSVs before starting
-    backup_existing_csvs()
+    # Backup or delete existing CSVs based on mode
+    backup_existing_csvs(reset_mode=args.reset, pause_mode=args.pause)
     
     # Handle --reset
     if args.reset:
