@@ -6,7 +6,9 @@ import logging
 import time
 import json
 import re
-from typing import List, Dict, Optional
+import csv
+from typing import List, Dict, Optional, Set
+from pathlib import Path
 import requests
 from urllib.parse import urlencode
 from src.utils import clean_obfuscated_email
@@ -14,7 +16,7 @@ from src.utils import clean_obfuscated_email
 from config import (
     BBB_BASE_URL, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY,
     RECORDS_PER_PAGE, KEYWORD_FILTERS, LOWER_48_STATES, USER_AGENT,
-    RATE_LIMIT, PROXY
+    RATE_LIMIT, PROXY, CSV_COLUMNS
 )
 from src.utils import contains_keyword, normalize_state, setup_logging, clean_html_tags
 
@@ -24,15 +26,47 @@ logger = logging.getLogger("bbb_scraper")
 class BBBScraper:
     """Web scraper for BBB.org roofing contractor data"""
     
-    def __init__(self):
-        """Initialize the scraper"""
+    def __init__(self, csv_path: Optional[str] = None):
+        """Initialize the scraper
+        
+        Args:
+            csv_path: Optional path to existing CSV file to avoid duplicates
+        """
         self.base_url = BBB_BASE_URL
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT})
         self.last_request_time = 0
         self.valid_records = []
         self.invalid_records = []
+        self.csv_path = csv_path
+        self.existing_business_names: Set[str] = set()
         
+        # Load existing business names from CSV if path provided
+        if csv_path:
+            self._load_existing_business_names()
+        
+    def _load_existing_business_names(self) -> None:
+        """Load all existing business names from CSV file to prevent duplicates
+        
+        Normalizes names by converting to lowercase and stripping HTML tags
+        """
+        if not self.csv_path or not Path(self.csv_path).exists():
+            return
+        
+        try:
+            with open(self.csv_path, "r", encoding="utf-8") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    business_name = row.get("business_name", "").strip()
+                    if business_name:
+                        # Normalize name for comparison (same as in scrape_city_search_url)
+                        name_key = clean_html_tags(business_name).strip().lower()
+                        self.existing_business_names.add(name_key)
+            
+            logger.info(f"Loaded {len(self.existing_business_names)} existing business names from CSV")
+        except Exception as e:
+            logger.warning(f"Failed to load existing business names from CSV: {e}")
+    
     def _respect_rate_limit(self):
         """Implement rate limiting between requests"""
         elapsed = time.time() - self.last_request_time
@@ -320,16 +354,25 @@ class BBBScraper:
                     self.invalid_records.append(record.get('businessName', 'Unknown'))
                     continue
 
+
+
                 # Normalize and clean the business name for deduplication
                 raw_name = record.get('businessName') or ''
                 name_key = clean_html_tags(raw_name).strip().lower()
                 if name_key in seen_names:
                     logger.info(f"---!!! Skipping duplicate business name in city results: {raw_name}")
                     continue
+                
+                # Check if business already exists in CSV file across all cities
+                if name_key in self.existing_business_names:
+                    logger.info(f"---!!! Skipping duplicate business (exists in CSV): {raw_name}")
+                    continue
 
                 retv = self.extract_business_data(record, source_url=search_url)
                 if retv["street_address"] or retv["email"]:
                     seen_names.add(name_key)
+                    # Also add to global CSV tracking set to prevent duplicates in subsequent cities
+                    self.existing_business_names.add(name_key)
                     collected.append(retv)
                 else:
                     logger.info(f"---!!! Excluding Business '{raw_name}' - email or address missing(address: {retv['street_address']}, email: {retv['email']})")

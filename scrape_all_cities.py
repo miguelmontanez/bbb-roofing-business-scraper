@@ -291,7 +291,7 @@ def scrape_all_cities(target_records_per_city: int = None,
         }
         total_records_so_far = 0
     
-    scraper = BBBScraper()
+    scraper = BBBScraper(csv_path=str(csv_path))
     
     # Apply optional start/end index slicing (1-based, inclusive end)
     if start_index is not None or end_index is not None:
